@@ -1,15 +1,24 @@
 import sys
 import glob
 import json
-import pathlib
+from pathlib import Path
+import random
 import asyncio
 import websockets
-import requests
 
-with open('config.json', 'r') as f:
-    config = json.load(f)
-    api_key = config['zotero_api_key']
-    notes_dir = pathlib.Path(config['notes_dir'])
+import requests
+import frontmatter
+import peewee as pw
+
+import common
+from common import IlmException
+
+
+config = common.load_config()
+api_key = config['zotero_api_key']
+check_limit = config['check_limit']
+notes_dir = config['notes_dir']
+zotero_dir = config['zotero_notes_dir']
 
 subscribe_msg = {
     "action": "createSubscriptions",
@@ -20,36 +29,73 @@ subscribe_msg = {
     ]
 }
 
-def add_item(topic):
-    print('Topic updated, checking for changes')
+def item_is_ilm(item):
+    tags = [x['tag'].lower() for x in item['tags']]
+    return 'ilm' in tags
+
+def process_item(item):
+    metadata = common.gen_metadata(config['timezone'])
+    metadata['zotero'] = f'zotero://select/library/items/{item["key"]}'
+
+    aliases = []
+    if (t := item.get('title')) is not None and t != '':
+        aliases.append(t)
+    if (t := item.get('shortTitle')) is not None and t != '':
+        aliases.append(t)
+    if len(aliases) > 0:
+        metadata['aliases'] = aliases
+
+    post = frontmatter.Post('', **metadata)
+    return post
+
+def process_updates(topic):
+    print('Topic updated, checking for changes.')
     s = requests.Session()
     s.headers.update({'Zotero-API-Key': api_key})
     base_url = f'https://api.zotero.org{topic}'
-    payload = {'sort': 'dateAdded', 'limit': 10}
-    r = s.get(f'{base_url}/items', params=payload)
+    payload = {'sort': 'dateAdded', 'limit': check_limit}
+    try:
+        r = s.get(f'{base_url}/items', params=payload)
+    except Exception as e:
+        print('Something went wrong retrieving latest items from Zotero.')
+        raise e
     if r.status_code != 200:
-        print('Bad response')
-        return
+        raise IlmException(f'Something went wrong retrieving latest items from Zotero: status code {r.status_code}')
+
     for item in r.json():
         d = item['data']
-        tags = [x['tag'] for x in d['tags']]
-        if 'ir' not in tags:
+        if not item_is_ilm(d):
             continue
-        print('Found IR item with title:', d.get('title', 'NA'))
-        p = notes_dir / f'{d["key"]}.md'
-        if p.is_file():
-            print('Already exists')
-            continue
-        with open(p, 'w') as f:
-            aliases = ''
-            if (t := d.get('title')) is not None and t != '':
-                aliases += f'  - {t}\n'
-            if (t := d.get('shortTitle')) is not None and t != '':
-                aliases += f'  - {t}\n'
-            if aliases != '':
-                aliases = f'\naliases:\n{aliases}'
-            f.write(f'---\nzotero_key: {d["key"]}\nzotero_type: {d["itemType"]}{aliases}---')
-        print('Created', p)
+        print('Found Ilm item with title:' + d.get('title', 'NA'))
+
+        post = process_item(item)
+
+        # Determine file name
+        if len(post.get('aliases', [])) == 0:
+            filename = d['key']
+        else:
+            filename = post['aliases'].pop()
+
+        # Save to disk
+        path = zotero_dir / f'{filename}.md'
+        if not path.is_file():
+            with open(path, 'w') as f:
+                f.write(frontmatter.dumps(post))
+            print('Item created.')
+        else:
+            print('Item already processed, removing tag from Zotero.')
+        
+        # Remove ilm tag from zotero item
+        try:
+            tags = [x for x in d['tags'] if x['tag'].lower() != 'ilm']
+            payload = {'version': item['version'], 'tags': tags}
+            r = s.patch(f'{base_url}/items/{d["key"]}', json=payload)
+            if r.status_code != 204:
+                raise IlmException(f'Something went wrong removing tag: status code {r.status_code}')
+        except Exception as e:
+            print('Something went wrong updating item without ilm tag.')
+            raise e
+        print('Removed ilm tag from Zotero item.')
 
 async def hello():
     uri = 'wss://stream.zotero.org'
@@ -60,8 +106,15 @@ async def hello():
             print(message)
             if message['event'] == 'topicUpdated':
                 topic = message['topic']
-                add_item(topic)
+                try:
+                    process_updates(topic)
+                except IlmException as e:
+                    print(f'Ilm error: {e}')
+                except Exception as e:
+                    print(f'Error: {str(e)}')
 
 if __name__ == '__main__':
+    process_updates('/users/5357939')
+    if len(sys.argv) > 1 and sys.argv[1] == '--once':
+        sys.exit()
     asyncio.run(hello())
-
