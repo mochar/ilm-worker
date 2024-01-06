@@ -4,7 +4,14 @@ import datetime
 import zoneinfo
 import random
 from pathlib import Path
+
 import shortuuid
+import frontmatter
+
+from database import db, Ilm
+
+DATE_FORMAT = '%Y-%m-%d'
+DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
 
 class IlmException(Exception):
@@ -23,11 +30,15 @@ def load_config():
         config = json.load(f)
 
     notes_dir = config['notes_dir'] = Path(config['notes_dir'])
-    zotero_dir = config['zotero_dir'] = Path(config['zotero_notes_dir'])
+    zotero_dir = config['zotero_notes_dir'] = Path(config['zotero_notes_dir'])
+    data_dir = config['data_dir'] = Path(config['data_dir'])
     if not zotero_dir.is_absolute():
-        zotero_dir = config['zotero_dir'] = notes_dir / zotero_dir
+        zotero_dir = config['zotero_notes_dir'] = notes_dir / zotero_dir
     if not zotero_dir.is_dir():
-        print('Zotero notes directly does not exist.')
+        print('Zotero notes directory does not exist.')
+        sys.exit()
+    if not data_dir.is_absolute():
+        print('Data directory must be an absolute path to an existing folder.')
         sys.exit()
 
     return config
@@ -35,14 +46,69 @@ def load_config():
 def dt_now(timezone):
     return datetime.datetime.now(zoneinfo.ZoneInfo(timezone))
 
+def set_timezone(dt, timezone):
+    return dt.replace(tzinfo=zoneinfo.ZoneInfo(timezone))
+
+def read_post(path):
+    with open(path, 'r') as f:
+        post = frontmatter.load(f)
+    reviewed = post.get('reviewed')
+    return post
+
 def gen_metadata(timezone):
     now = dt_now(timezone)
     delay = random.choice(range(1, 6))
     review = now + datetime.timedelta(days=delay)
+    # In format recognized by obsidian
     metadata = {
         'ilm': generate_id(),
-        'review': review.strftime('%Y-%m-%d'), 
+        'review': review.strftime(DATE_FORMAT), 
+        'reviewed': False,
         'score': 1,
-        'created': now.strftime('%Y-%m-%dT%H:%M:%S')
+        'multiplier': 2,
+        'created': now.strftime(DATETIME_FORMAT)
     }
     return metadata
+
+def ilm_from_post(post, path, create: bool):
+    ilm = Ilm(path=path, ilm_id=post['ilm'], zot_key=post.get('zotero'),
+        created_date=parse_datetime(post['created']),
+        review_date=parse_date(post['review']),
+        score=post['score'], multiplier=post['multiplier'])
+    if create:
+        ilm.save()
+    return ilm
+
+def iter_ilm_notes(notes_path: Path):
+    md_paths = notes_path.rglob('*.md')
+    for path in md_paths:
+        if path.parent.name == '.trash':
+            continue
+
+        # Read
+        try:
+            post = read_post(path)
+        except Exception as e:
+            print(e)
+            continue
+
+        # Only consider posts marked as ilm-posts.
+        if 'ilm' not in post:
+            continue
+
+        yield path, post
+
+def with_db(fun):
+    def inner(*args, **kwargs):
+        try:
+            db.connect()
+            fun(*args, **kwargs)
+        finally:
+            db.close()
+    return inner
+
+def parse_datetime(dt):
+    return datetime.datetime.strptime(dt, DATETIME_FORMAT)
+
+def parse_date(dt):
+    return datetime.datetime.strptime(dt, DATE_FORMAT).date()

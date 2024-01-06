@@ -1,2 +1,4 @@
 config.json
 *.swp
+__pycache__
+logs/*

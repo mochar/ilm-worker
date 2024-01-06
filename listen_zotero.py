@@ -1,22 +1,22 @@
+"""
+Check for new items added to zotero with the "ilm" tag
+and create a note for them.
+"""
 import sys
-import glob
 import json
-from pathlib import Path
-import random
 import asyncio
 import websockets
 
 import requests
 import frontmatter
-import peewee as pw
 
 import common
 from common import IlmException
-
+from database import Ilm, db
 
 config = common.load_config()
 api_key = config['zotero_api_key']
-check_limit = config['check_limit']
+check_limit = config['zotero_check_limit']
 notes_dir = config['notes_dir']
 zotero_dir = config['zotero_notes_dir']
 
@@ -35,7 +35,7 @@ def item_is_ilm(item):
 
 def process_item(item):
     metadata = common.gen_metadata(config['timezone'])
-    metadata['zotero'] = f'zotero://select/library/items/{item["key"]}'
+    metadata['zotero'] = item["key"]
 
     aliases = []
     if (t := item.get('title')) is not None and t != '':
@@ -45,11 +45,12 @@ def process_item(item):
     if len(aliases) > 0:
         metadata['aliases'] = aliases
 
-    post = frontmatter.Post('', **metadata)
+    content = f'[Open in Zotero](zotero://select/library/items/{item["key"]})'
+    post = frontmatter.Post(content, **metadata)
     return post
 
-def process_updates(topic):
-    print('Topic updated, checking for changes.')
+@common.with_db
+def process_topic(topic):
     s = requests.Session()
     s.headers.update({'Zotero-API-Key': api_key})
     base_url = f'https://api.zotero.org{topic}'
@@ -68,7 +69,7 @@ def process_updates(topic):
             continue
         print('Found Ilm item with title:' + d.get('title', 'NA'))
 
-        post = process_item(item)
+        post = process_item(d)
 
         # Determine file name
         if len(post.get('aliases', [])) == 0:
@@ -76,15 +77,19 @@ def process_updates(topic):
         else:
             filename = post['aliases'].pop()
 
-        # Save to disk
+        # Save item to disk and index
+        if Ilm.select().where(Ilm.zot_key == d['key']).exists():
+            print('Item already processed, removing tag from Zotero.')
+        else:
+            common.ilm_from_post(post, path, create=True)
+            print('Item created.')
+
+        # It might be in db and user removed file later on.
         path = zotero_dir / f'{filename}.md'
-        if not path.is_file():
+        if not path.exists():
             with open(path, 'w') as f:
                 f.write(frontmatter.dumps(post))
-            print('Item created.')
-        else:
-            print('Item already processed, removing tag from Zotero.')
-        
+
         # Remove ilm tag from zotero item
         try:
             tags = [x for x in d['tags'] if x['tag'].lower() != 'ilm']
@@ -107,14 +112,15 @@ async def hello():
             if message['event'] == 'topicUpdated':
                 topic = message['topic']
                 try:
-                    process_updates(topic)
+                    print('Topic updated, checking for changes.')
+                    process_topic(topic)
                 except IlmException as e:
                     print(f'Ilm error: {e}')
                 except Exception as e:
                     print(f'Error: {str(e)}')
 
 if __name__ == '__main__':
-    process_updates('/users/5357939')
+    process_topic('/users/5357939')
     if len(sys.argv) > 1 and sys.argv[1] == '--once':
         sys.exit()
     asyncio.run(hello())
