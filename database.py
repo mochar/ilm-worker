@@ -24,10 +24,13 @@ class Ilm(BaseModel):
     multiplier = FloatField()
 
 class Review(BaseModel):
-    ilm = ForeignKeyField(Ilm, backref='reviews')
+    ilm = ForeignKeyField(Ilm, backref='reviews', 
+        on_delete='CASCADE')
     update_date = DateTimeField()
     # Ilm properties at time of review
     review_date = DateField()
     reviewed = BooleanField()
     score = FloatField()
     multiplier = FloatField()
+    # Decided at update
+    next_review_date = DateField()

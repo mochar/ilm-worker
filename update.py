@@ -1,15 +1,13 @@
 """
 Update priority and schedule of ilm notes.
 """
-from pathlib import Path
 import datetime
 
-import tqdm.auto as tqdm
 import frontmatter
 from scipy.stats import dirichlet
 
 import common
-from database import db, Ilm, Review
+from database import Ilm, Review
 from index import Indexer
 
 
@@ -45,7 +43,7 @@ def update():
         is_today = delta == 0
         is_future = delta < 0
         is_early = is_future and reviewed
-        print(f'- Now: {now}')
+        print(f'- Now: {now.date()}')
         print(f'- Review date: {ilm.review_date}')
         print(f'- Delta now and review date: {delta}')
 
@@ -54,23 +52,24 @@ def update():
             print(f'- Review date passed or reviewed too early (delta={delta})')
             # The order is important
             prev_review = Review.get_or_none(ilm=ilm)
-            Review.create(ilm=ilm, reviewed=reviewed, 
-                update_date=now, review_date=ilm.review_date,
-                score=ilm.score, multiplier=ilm.multiplier)
 
             # Update schedule of ilm
-            prev_date = ilm.created_date if prev_review is None else prev_review.review_date
-            prev_date = datetime.datetime(prev_date.year, prev_date.month, prev_date.day)
-            prev_date = common.set_timezone(prev_date, config['timezone'])
-            interval = (now - prev_date).days
+            prev_date = ilm.created_date.date() if prev_review is None else prev_review.review_date
+            interval = (now.date() - prev_date).days
             # Reviewed same day as created interval=0, so set to 1
             new_interval = max(interval * ilm.multiplier, 1)
-            print(f'- Prev review date: {prev_date}')
+            print(f'- Prev review date/creation date: {prev_date}')
             print(f'- Cur interval: {interval}, New interval: {new_interval}')
             ilm.review_date = prev_date + datetime.timedelta(days=new_interval)
+            print(f'- New review date: {ilm.review_date}')
             ilm.save()
-            post['review'] = ilm.review_date.strftime(common.DATE_FORMAT)
+            post['review'] = ilm.review_date
             post['reviewed'] = False
+
+            Review.create(ilm=ilm, reviewed=reviewed, 
+                update_date=now, review_date=ilm.review_date,
+                score=ilm.score, multiplier=ilm.multiplier,
+                next_review_date=ilm.review_date)
 
         if post.get('priority') is not None:
             post['priority'] = None
@@ -92,12 +91,12 @@ def update():
     if len(today_ilms) == 1:
         priorities = [1]
     else:
-        scores = [ilm.score for ilm in today_ilms]
+        scores = [item['ilm'].score for item in today_ilms]
         priorities = dirichlet.rvs(scores, size=1, random_state=1)[0]
     for item, priority in zip(today_ilms, priorities):
         post = item['post']
         ilm = item['ilm']
-        post['priority'] = priority
+        post['priority'] = round(float(priority)*100, 2)
         write_post(post, ilm.path)
 
 if __name__ == '__main__':

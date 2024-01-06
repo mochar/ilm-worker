@@ -44,7 +44,9 @@ def load_config():
     return config
 
 def dt_now(timezone):
-    return datetime.datetime.now(zoneinfo.ZoneInfo(timezone))
+    now = datetime.datetime.now(zoneinfo.ZoneInfo(timezone))
+    # now += datetime.timedelta(days=1)
+    return now
 
 def set_timezone(dt, timezone):
     return dt.replace(tzinfo=zoneinfo.ZoneInfo(timezone))
@@ -52,7 +54,6 @@ def set_timezone(dt, timezone):
 def read_post(path):
     with open(path, 'r') as f:
         post = frontmatter.load(f)
-    reviewed = post.get('reviewed')
     return post
 
 def gen_metadata(timezone):
@@ -62,18 +63,17 @@ def gen_metadata(timezone):
     # In format recognized by obsidian
     metadata = {
         'ilm': generate_id(),
-        'review': review.strftime(DATE_FORMAT), 
+        'review': review.date(),
         'reviewed': False,
         'score': 1,
         'multiplier': 2,
-        'created': now.strftime(DATETIME_FORMAT)
+        'created': now
     }
     return metadata
 
 def ilm_from_post(post, path, create: bool):
     ilm = Ilm(path=path, ilm_id=post['ilm'], zot_key=post.get('zotero'),
-        created_date=parse_datetime(post['created']),
-        review_date=parse_date(post['review']),
+        created_date=post['created'], review_date=post['review'],
         score=post['score'], multiplier=post['multiplier'])
     if create:
         ilm.save()

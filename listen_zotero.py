@@ -12,7 +12,7 @@ import frontmatter
 
 import common
 from common import IlmException
-from database import Ilm, db
+from database import Ilm
 
 config = common.load_config()
 api_key = config['zotero_api_key']
@@ -71,11 +71,24 @@ def process_topic(topic):
 
         post = process_item(d)
 
-        # Determine file name
+        # Determine file name.
+        # TODO: Determine if this should be the title if there is one.
+        # For now find it more convenient to have key as file name.
+        """
         if len(post.get('aliases', [])) == 0:
             filename = d['key']
         else:
             filename = post['aliases'].pop()
+        """
+        filename = d['key']
+
+        # It might be in db and user removed file later on.
+        # This edge case should not happen as deleted ilm notes
+        # are removed from db as well.
+        path = zotero_dir / f'{filename}.md'
+        if not path.exists():
+            with open(path, 'w') as f:
+                f.write(frontmatter.dumps(post))
 
         # Save item to disk and index
         if Ilm.select().where(Ilm.zot_key == d['key']).exists():
@@ -83,12 +96,6 @@ def process_topic(topic):
         else:
             common.ilm_from_post(post, path, create=True)
             print('Item created.')
-
-        # It might be in db and user removed file later on.
-        path = zotero_dir / f'{filename}.md'
-        if not path.exists():
-            with open(path, 'w') as f:
-                f.write(frontmatter.dumps(post))
 
         # Remove ilm tag from zotero item
         try:
