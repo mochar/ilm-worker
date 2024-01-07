@@ -44,8 +44,13 @@ def process_item(item):
         aliases.append(t)
     if len(aliases) > 0:
         metadata['aliases'] = aliases
+    
+    metadata['source'] = [
+        f'zotero://select/library/items/{item["key"]}',
+        f'https://www.zotero.org/charmo/items/{item["key"]}'
+    ]
 
-    content = f'[Open in Zotero](zotero://select/library/items/{item["key"]})'
+    content = ''
     post = frontmatter.Post(content, **metadata)
     return post
 
@@ -54,7 +59,7 @@ def process_topic(topic):
     s = requests.Session()
     s.headers.update({'Zotero-API-Key': api_key})
     base_url = f'https://api.zotero.org{topic}'
-    payload = {'sort': 'dateAdded', 'limit': check_limit}
+    payload = {'sort': 'dateModified', 'limit': check_limit}
     try:
         r = s.get(f'{base_url}/items', params=payload)
     except Exception as e:
