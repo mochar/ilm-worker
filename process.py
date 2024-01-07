@@ -26,10 +26,15 @@ def process_ilm(ilm: Ilm, post: Post):
     print(f'- New review date: {review_date}')
     ilm.review_date = review_date
     post['review'] = review_date
-    post['reviewed'] = False
+
+    ## Update score
+    if reviewed:
+        ilm.score = ilm.score + 1
+        post['score'] = ilm.score
 
     # Save and store
     ilm.save()
+    post['reviewed'] = False
     common.write_post(post, ilm.path)
 
     # Add review record
