@@ -46,15 +46,6 @@ class Indexer:
             multiplier = template['multiplier'] if ilm is None else ilm.multiplier
             post['multiplier'] = multiplier
 
-        # Can't move review date to the past. But user also cannot
-        # move review date to today because priorities of today's 
-        # reviews have already been determined. User can just review
-        # item if he doesn't want to wait.
-        if post['review'] <= now.date():
-            print('Fixing invalid review date value.')
-            review = template['review'] if ilm is None else ilm.review_date
-            post['review'] = review
-
         if ilm is not None:
             # Uncommented because
             # - Maybe I want to change creation date
@@ -67,7 +58,15 @@ class Indexer:
                 print('Fixing altered creation date.')
                 post['created'] = ilm.created_date
             """
-            pass
+
+            # Can't move review date to the past. But user also cannot
+            # move review date to today because priorities of today's 
+            # reviews have already been determined. User can just review
+            # item if he doesn't want to wait.
+            if post['review'] != ilm.review_date and post['review'] <= now.date():
+                print('Fixing invalid review date: review value.')
+                review = template['review'] if ilm is None else ilm.review_date
+                post['review'] = review
 
         return post
 

@@ -3,6 +3,7 @@ import json
 import datetime
 import zoneinfo
 import random
+from enum import Enum
 from pathlib import Path
 
 import shortuuid
@@ -16,6 +17,52 @@ DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
 class IlmException(Exception):
     pass
+
+class ReviewState(Enum):
+    """
+    The review state depends on 
+    1. Difference today and review date in days ("delta").
+    2. Whether or not the ilm has been marked as reviewed.
+
+    PAST:
+    The ilm review date was some day before today. This can happen when:
+    - The ilm was not reviewed and therefore not processed by the 
+      `process_reviews` script. Processing is therefore happening by
+      the daily run `update` script. (delta=1)
+    - The ilm was reviewed close to midgnight so the `process_reviews` 
+      script did not catch it on time. (delta=1)
+    - Both scripts for some reason did not run (bugs/server down/etc),
+      The review date has thus passed but the ilm has not been assigned 
+      a new review date yet. (delta>1)
+
+    TODAY:
+    The ilm is in the queue for today, and can be reviewed or not (yet).
+    (delta=0)
+
+    FUTURE:
+    The ilm is scheduled for review in the future AND has not been
+    reviewed. (delta<0)
+
+    EARLY:
+    The ilm is scheduled for review in the future AND has been reviewed.
+    (delta<0)
+    """
+    PAST = 1
+    TODAY = 2
+    FUTURE = 3
+    EARLY = 4
+
+    @staticmethod
+    def determine(date_now, date_review, reviewed: bool):
+        delta = (date_now - date_review).days
+        if delta > 0:
+            return ReviewState.PAST
+        if delta == 0:
+            return ReviewState.TODAY
+        if reviewed:
+            return ReviewState.EARLY
+        else:
+            return ReviewState.FUTURE
 
 def generate_id():
     return shortuuid.uuid()[:8]
@@ -112,3 +159,7 @@ def parse_datetime(dt):
 
 def parse_date(dt):
     return datetime.datetime.strptime(dt, DATE_FORMAT).date()
+
+def write_post(post, path):
+    with open(path, 'w') as f:
+        f.write(frontmatter.dumps(post))

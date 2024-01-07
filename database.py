@@ -25,7 +25,7 @@ class Ilm(BaseModel):
 
 class Review(BaseModel):
     ilm = ForeignKeyField(Ilm, backref='reviews', 
-        on_delete='CASCADE')
+        on_delete='SET NULL', null=True)
     update_date = DateTimeField()
     # Ilm properties at time of review
     review_date = DateField()

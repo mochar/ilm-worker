@@ -1,21 +1,15 @@
 """
-Update priority and schedule of ilm notes.
+Update priority of ilm notes scheduled for today.
 """
-import datetime
-
-import frontmatter
 from scipy.stats import dirichlet
 
 import common
-from database import Ilm, Review
+from database import Ilm
 from index import Indexer
+from process import process
 
 
 config = common.load_config()
-
-def write_post(post, path):
-    with open(path, 'w') as f:
-        f.write(frontmatter.dumps(post))
 
 @common.with_db
 def update():
@@ -24,82 +18,30 @@ def update():
     to the indexer syncing changes. The exception is the "reviewed"
     property only in the post.
     """
-    today_ilms = []
-    for ilm in Ilm.select():
-        print(f'Processing: {ilm.path}')
-        post = common.read_post(ilm.path)
-        original_metadata = post.metadata.copy()
-        reviewed = post['reviewed']
-
-        # Program is run at night which means timely reviews 
-        # are done yesterday. It can happen that the update
-        # script is run too late, so that the review date is
-        # before yesterday. Deal with it the same way as a 
-        # timely review for now.
-        now = common.dt_now(config['timezone'])
-        delta = (now.date() - ilm.review_date).days
-        is_timely = delta == 1
-        is_past = delta > 1
-        is_today = delta == 0
-        is_future = delta < 0
-        is_early = is_future and reviewed
-        print(f'- Now: {now.date()}')
-        print(f'- Review date: {ilm.review_date}')
-        print(f'- Delta now and review date: {delta}')
-
-        # Review date has passed or item reviewed early
-        if is_past or is_timely or is_early:
-            print(f'- Review date passed or reviewed too early (delta={delta})')
-            # The order is important
-            prev_review = Review.get_or_none(ilm=ilm)
-
-            # Update schedule of ilm
-            prev_date = ilm.created_date.date() if prev_review is None else prev_review.review_date
-            interval = (now.date() - prev_date).days
-            # Reviewed same day as created interval=0, so set to 1
-            new_interval = max(interval * ilm.multiplier, 1)
-            print(f'- Prev review date/creation date: {prev_date}')
-            print(f'- Cur interval: {interval}, New interval: {new_interval}')
-            ilm.review_date = prev_date + datetime.timedelta(days=new_interval)
-            print(f'- New review date: {ilm.review_date}')
-            ilm.save()
-            post['review'] = ilm.review_date
-            post['reviewed'] = False
-
-            Review.create(ilm=ilm, reviewed=reviewed, 
-                update_date=now, review_date=ilm.review_date,
-                score=ilm.score, multiplier=ilm.multiplier,
-                next_review_date=ilm.review_date)
-
-        if post.get('priority') is not None:
-            post['priority'] = None
-        
-        if post.metadata != original_metadata:
-            print('- Updating note.')
-            write_post(post, ilm.path)
-
-        # New review up today. Note that an ilm can be
-        # reviewed two days successifily, so we cannot do an
-        # elif statement here.
-        if is_today:
-            today_ilms.append(dict(ilm=ilm, post=post))
+    today = common.dt_now(config['timezone']).date()
+    ilms = Ilm.select().where(Ilm.review_date == today)
+    num = len(ilms)
     
-    # Update priorities
-    if len(today_ilms) == 0:
+    if num == 0:
+        print('No ilms for review today.')
         return
-    print(f'Updating priorities of {len(today_ilms)} ilms.')
-    if len(today_ilms) == 1:
-        priorities = [1]
+
+    print(f'Setting priorities of {num} ilms.')
+    if num == 1:
+        priorities = [100]
     else:
-        scores = [item['ilm'].score for item in today_ilms]
-        priorities = dirichlet.rvs(scores, size=1, random_state=1)[0]
-    for item, priority in zip(today_ilms, priorities):
-        post = item['post']
-        ilm = item['ilm']
+        scores = [ilm.score for ilm in ilms]
+        priorities = dirichlet.rvs(scores, size=1)[0].tolist()
+    
+    for ilm, priority in zip(ilms, priorities):
+        post = common.read_post(ilm.path)
         post['priority'] = round(float(priority)*100, 2)
-        write_post(post, ilm.path)
+        common.write_post(post, ilm.path)
 
 if __name__ == '__main__':
     # First do an index to get latest changes
     Indexer().index()
+    # Then process ilms to update their schedules
+    process()
+    # Finally set priorities of ilms due for today
     update()
