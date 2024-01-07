@@ -1,6 +1,6 @@
 # 🧠 Ilm
 
-Home-made implementation of incremental reading.
+Home-made implementation of incremental reading and writing.
 
 - Based on Markdown files (Obsidian)
 - Server side updating for multi-client support
