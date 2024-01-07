@@ -1,0 +1,11 @@
+[Unit]
+Description=Ilm Zotero worker
+
+[Service]
+Type=simple
+Restart=always
+WorkingDirectory=/path/to/ilm-worker/
+ExecStart=/path/to/python /path/to/ilm-worker/listen_zotero.py >> /path/to/logs/systemd-listen_zotero.log 2>&1
+
+[Install]
+WantedBy=multi-user.target
