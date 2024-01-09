@@ -49,6 +49,9 @@ def process_item(item):
         f'zotero://select/library/items/{item["key"]}',
         f'https://www.zotero.org/charmo/items/{item["key"]}'
     ]
+    print(item.get('url'))
+    if (url := item.get('url')) is not None and t != '':
+        metadata['source'].append(url)
 
     content = ''
     post = frontmatter.Post(content, **metadata)
